@@ -1,0 +1,95 @@
+---
+title: "Data cleaning"
+author: "Emma Ning"
+date: "June 11^th^, 2020"
+output:
+  pdf_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 5
+    highlight: tango
+  word_document:
+    toc: yes
+    toc_depth: '2'
+  html_document:
+    df_print: kable
+    highlight: tango
+    theme: sandstone
+    toc: yes
+    toc_depth: 2
+    toc_float:
+      collapsed: yes
+---
+
+```{r message = FALSE, warning = FALSE}
+library(readxl)
+#library(lubridate)
+library(tidyverse)
+library(psych) # Cronbach's alpha and etc.
+
+setwd("~/Dropbox/Summer 2020/Indiana University/Month of June")
+
+nifd <- read_excel("NIFD_Clinical_Data_2017_final_updated.xlsx")
+```
+
+Education: most of our participants are highly educated.
+Most of our participants at first visit were around ~65 years old.
+There are 532 males and 491 females, no one is missing on gender.
+
+
+### Preliminary data visualizations + Data cleaning
+```{r warning = FALSE}
+# filtering out variables we don't need
+nifd <- nifd %>% 
+  select(-SITE)
+
+# GENDER descriptive stats
+nifd <- nifd %>% 
+  mutate(gender.f = as.factor(GENDER)) # convert numeric gender to factor
+table(nifd$gender.f)
+
+# labelling education variable
+nifd$edu_level[nifd$EDUCATION <= 12 ] <- "HS/HS grad"
+nifd$edu_level[nifd$EDUCATION > 12 & nifd$EDUCATION <= 16] <- "College/College grad"
+nifd$edu_level[nifd$EDUCATION > 16] <- "post College"
+# convert edu_level to factor for summarizing
+nifd <- nifd %>% 
+  mutate(edu_level.f = as.factor(edu_level))
+#summary(nifd$edu_level.f)
+#ggplot(nifd, aes(x = edu_level.f))+geom_bar() # bar plot for education
+
+# WRANGLING DATES
+# age at the start of data recording
+# creating decimal dob for participants
+nifd$dob_decimal <- lubridate::decimal_date(nifd$DOB)
+nifd$appt_date_decimal <- lubridate::decimal_date(nifd$CLINICAL_LINKDATE)
+nifd <- nifd %>% 
+  mutate(age_at_first_appt = appt_date_decimal - dob_decimal)
+
+# create a separate dataset for participants ID, their first visit, and their age
+first_visit <- nifd %>% 
+  select(LONI_ID, DOB, CLINICAL_LINKDATE, age_at_first_appt)
+first_visit <- first_visit %>% 
+  group_by(LONI_ID) %>% 
+  filter(row_number()==1) # select the first row for each unique participant ID (their 1st visit)
+
+# check for missing according to ID
+#check1 <- subset(nifd, LONI_ID == "1_S_0349") # this person does not have anything
+#check2 <- subset(first_visit, age_at_first_appt < 45) # check for people aged under 45 at first visit
+#check3 <- subset(nifd, LONI_ID == "1_S_0143") # this 36 year old person has data, keep
+
+# get rid of person aged 7 from dataset
+nifd <- subset(nifd, LONI_ID!= "1_S_0349")
+first_visit <- subset(first_visit, LONI_ID!= "1_S_0349")
+# visualize age distributions at first visit
+ggplot(first_visit, aes(x = age_at_first_appt)) + geom_histogram(binwidth = 2) + 
+  ggtitle("Age distribution of participants at first visit") 
+# calculate time lapse between each visit for each participant
+visits_time_interval <- nifd %>% # and saves this info into a new dataframe
+  select(LONI_ID, VISIT_NUMBER, CLINICAL_LINKDATE, appt_date_decimal) %>% 
+  spread(VISIT_NUMBER, appt_date_decimal, sep = "")
+
+
+```
+
+
