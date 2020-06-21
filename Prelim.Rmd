@@ -25,16 +25,14 @@ output:
 library(readxl)
 #library(lubridate)
 library(tidyverse)
-library(psych) # Cronbach's alpha and etc.
+library(psych) # Cronbach's alpha and summary stats etc.
+library(plotrix) # for se calculation
 
-setwd("~/Dropbox/Summer 2020/Indiana University/Month of June")
+setwd("/Volumes/GoogleDrive/My Drive/Summer2020/IndianaUniversity/June")
 
-nifd <- read_excel("NIFD_Clinical_Data_2017_final_updated.xlsx")
+nifd <- read_excel("NIFD_version3.xlsx")
 ```
 
-Education: most of our participants are highly educated.
-Most of our participants at first visit were around ~65 years old.
-There are 532 males and 491 females, no one is missing on gender.
 
 
 ### Preliminary data visualizations + Data cleaning
@@ -46,7 +44,9 @@ nifd <- nifd %>%
 # GENDER descriptive stats
 nifd <- nifd %>% 
   mutate(gender.f = as.factor(GENDER)) # convert numeric gender to factor
-table(nifd$gender.f)
+gender <- nifd %>% 
+  distinct(LONI_ID, gender.f)
+table(gender$gender.f)
 
 # labelling education variable
 nifd$edu_level[nifd$EDUCATION <= 12 ] <- "HS/HS grad"
@@ -56,7 +56,9 @@ nifd$edu_level[nifd$EDUCATION > 16] <- "post College"
 nifd <- nifd %>% 
   mutate(edu_level.f = as.factor(edu_level))
 #summary(nifd$edu_level.f)
-#ggplot(nifd, aes(x = edu_level.f))+geom_bar() # bar plot for education
+ggplot(nifd, aes(x = edu_level.f)) + 
+  geom_bar() + geom_text(stat='count', aes(label = ..count..), vjust = -0.2) # bar plot for education
+#ggsave("education.png", height = 7, width = 12)
 
 # WRANGLING DATES
 # age at the start of data recording
@@ -79,17 +81,272 @@ first_visit <- first_visit %>%
 #check3 <- subset(nifd, LONI_ID == "1_S_0143") # this 36 year old person has data, keep
 
 # get rid of person aged 7 from dataset
-nifd <- subset(nifd, LONI_ID!= "1_S_0349")
-first_visit <- subset(first_visit, LONI_ID!= "1_S_0349")
+#nifd <- subset(nifd, LONI_ID!= "1_S_0349")
+#first_visit <- subset(first_visit, LONI_ID!= "1_S_0349")
 # visualize age distributions at first visit
-ggplot(first_visit, aes(x = age_at_first_appt)) + geom_histogram(binwidth = 2) + 
+ggplot(first_visit, aes(x = age_at_first_appt)) + geom_histogram(binwidth = 1) + 
   ggtitle("Age distribution of participants at first visit") 
+
 # calculate time lapse between each visit for each participant
 visits_time_interval <- nifd %>% # and saves this info into a new dataframe
-  select(LONI_ID, VISIT_NUMBER, CLINICAL_LINKDATE, appt_date_decimal) %>% 
-  spread(VISIT_NUMBER, appt_date_decimal, sep = "")
+  select(LONI_ID, VISIT_NUMBER, CLINICAL_LINKDATE, appt_date_decimal) 
 
+  #spread(VISIT_NUMBER, appt_date_decimal, sep = "")
+
+# sort the visits_time_interval by subject ID and visit number, in ascending order
+visits_time_interval <- visits_time_interval[with(visits_time_interval, order(LONI_ID, VISIT_NUMBER)), ]
+# create new column in dataframe that calculates time interval difference
+visits_time_interval <- visits_time_interval %>% 
+  group_by(LONI_ID) %>% 
+  mutate(visits_time_diff = appt_date_decimal - lag(appt_date_decimal, default = appt_date_decimal[1]))
+
+
+# plotting visit times
+nifd <- nifd %>% 
+  mutate(visit_number.f = as.factor(VISIT_NUMBER))
+ggplot(nifd, aes(x = visit_number.f)) + geom_bar() + 
+  geom_text(stat='count', aes(label = ..count..), vjust = -0.2) +
+  ggtitle("Summary of visit numbers")
+#ggsave("numVisits.png", height = 7, width = 12)
+
+# calculate the number of MMSE visits distribution for the sample
+nifd <- nifd %>% 
+  mutate(MMSE_YN = if_else(MMSE_TOT %in% NA, 0, 1)) %>% # whether they have a MMSE visit or not (YN)
+  mutate(CDR_YN = if_else(CDR_TOT %in% NA, 0, 1))
+# new df called visits
+visits <- nifd %>% 
+  select(LONI_ID, MMSE_TOT, MMSE_YN, CDR_TOT, CDR_YN) %>% 
+  group_by(LONI_ID) %>% 
+  mutate(mmse_total_visits = sum(MMSE_YN), cdr_total_visits = sum(CDR_YN))
+
+visits <- visits %>% 
+  group_by(LONI_ID) %>% 
+  filter(row_number()==1) %>% 
+  select(-MMSE_YN, -MMSE_TOT, -CDR_YN, -CDR_TOT)
+
+ggplot(visits, aes(x = as.factor(mmse_total_visits)))+ geom_bar() + 
+  geom_text(stat='count', aes(label = ..count..), vjust = -0.2) +
+  ggtitle("Total MMSE visits")
+#ggsave("MMSEvisits.png", height = 7, width = 12)
+ggplot(visits, aes(x = as.factor(cdr_total_visits)))+ geom_bar() + 
+  geom_text(stat='count', aes(label = ..count..), vjust = -0.2) + 
+  ggtitle("Total CDR visits")
+#ggsave("CDRvisits.png", height = 7, width = 12)
+```
+
+
+## Visualizing changes over time
+### For semantic & non-fluent groups over time
+Language behavioral measures:
+BNT (Boston Naming Test) - BNTCORR
+Phonemic Fluency - DCORR
+Semantic Fluency - ANCORR
+Peabody Picture Vocab 
+Pyramids & Palm Trees - PPTP_COR
+California Verbal Learning Test 
+
+Use MMSE as baseline measure.
+```{r}
+lang_behav_measures <- nifd %>% 
+  select(LONI_ID, DX, VISIT_NUMBER, CLINICAL_LINKDATE, dob_decimal, age_at_first_appt, gender.f, edu_level.f,
+         MMSE_DCDATE, MMSE_TOT, DCORR, ANCORR, BNTCORR, PPTP_DCDATE, PPTP_COR, 
+         TRCOTOT:RECOG, PPVTVRB:PPVTINA)
+lang_behav_measures$clinical_date_decimal <- lubridate::decimal_date(lang_behav_measures$CLINICAL_LINKDATE)
+# merge this dataset with the time interval between visits dataset
+lang_behav_measures <- merge(lang_behav_measures, visits_time_interval, by = c("LONI_ID", "CLINICAL_LINKDATE"))
+# get rid of redundant columns & change names
+lang_behav_measures <- lang_behav_measures %>% 
+  select(-VISIT_NUMBER.x) %>% 
+  rename(visit_number = VISIT_NUMBER.y) %>% 
+  mutate(diagnosis.f = as.factor(DX)) %>% 
+  select(LONI_ID, DX, diagnosis.f, CLINICAL_LINKDATE, dob_decimal, age_at_first_appt, clinical_date_decimal:visits_time_diff,
+         gender.f:PPVTINA) # reorder variable display order
+
+# create another dataset with diagnosis, lang behav measures, and their time lapse between visits
+# average values according to different diagnoses (CON, PNFA, SV)
+
+# first calculate how many distinct diagnoses there are
+# diagnosis_counts <- lang_behav_measures %>% 
+#   distinct(LONI_ID, diagnosis.f)
+# table(diagnosis_counts$diagnosis.f)
+
+# CON, PNFA, SV counts in order: 126, 34, 37
+# then calculate 
+temp1 <- lang_behav_measures %>% 
+  select(LONI_ID, diagnosis.f, visit_number, visits_time_diff, DCORR) %>% 
+  mutate(time_diff_round = plyr::round_any(visits_time_diff, 0.5)) %>% # rounding in increments of .5
+  filter(!is.na(DCORR)) # get rid of NA values for col DCORR
+
+# if we were to use the rounded time difference
+# calculate sum of DCORR score based on groups of diagnoses type and time differences round
+# temp2 <- temp1 %>% 
+#   group_by(diagnosis.f, time_diff_round) %>% 
+#   mutate(sum_DCORR = sum(DCORR, na.rm = TRUE))
+
+# if we were to use visit numbers
+# calculate sum of DCORR score based on groups of diagnoses type and visit number
+temp2 <- temp1 %>% 
+  group_by(diagnosis.f, visit_number) %>% 
+  mutate(sum_DCORR = sum(DCORR, na.rm = TRUE)) %>% 
+  mutate(count = n())
+
+
+# calculate average after group_by for each groups of diagnoses + visit number
+temp2 <- temp2 %>% 
+  group_by(diagnosis.f, visit_number) %>%
+  mutate(avg_DCORR = sum_DCORR/count) %>% 
+  mutate(se_DCORR = plotrix::std.error(DCORR)) 
+
+
+ggplot(temp2, aes(x = visit_number, y = avg_DCORR, color = diagnosis.f)) + 
+  geom_line(size = 0.7) + ggtitle("Time series of DCORR score") +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7)) + scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  geom_errorbar(aes(ymin = avg_DCORR - se_DCORR, ymax = avg_DCORR + se_DCORR), width = 0.2)
+
+# bar graphs of visit number
+ggplot(temp2, aes(x = visit_number)) + geom_bar() + ggtitle("DCORR visits distribution") +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7)) + 
+  geom_text(stat='count', aes(label = ..count..), vjust = -0.2)
+#ggsave("DCORR_visits.png", height = 7, width = 12)
+  
+  
+#ggsave("DCORR_over_time.png", height = 7, width = 12)
+# http://www.sthda.com/english/articles/32-r-graphics-essentials/128-plot-time-series-data-using-ggplot/
+  
+```
+
+
+Add error bars to time series
+Bar graphs of how many people completed which visit
+
+
+### Now for all the other measures other than DCORR - DO NOT RUN IF NOT PLOTTING 
+```{r}
+### BNTCORR
+bntcorr <- lang_behav_measures %>% 
+  select(LONI_ID, diagnosis.f, visit_number, BNTCORR) %>% 
+  filter(!is.na(BNTCORR))
+
+
+# if we were to use visit numbers
+# calculate sum of DCORR score based on groups of diagnoses type and visit number
+bntcorr <- bntcorr %>% 
+  group_by(diagnosis.f, visit_number) %>% 
+  mutate(sum_BNTCORR = sum(BNTCORR, na.rm = TRUE)) %>% 
+  mutate(count_BNTCORR = n()) %>% 
+  mutate(avg_BNTCORR = sum_BNTCORR/count_BNTCORR, se_BNTCORR = plotrix::std.error(BNTCORR))
+
+# time series of measure change
+ggplot(bntcorr, aes(x = visit_number, y = avg_BNTCORR, color = diagnosis.f)) + 
+  geom_line(size = 0.7) + ggtitle("Time series of BNTCORR score") +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7)) + scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  geom_errorbar(aes(ymin = avg_BNTCORR - se_BNTCORR, ymax = avg_BNTCORR + se_BNTCORR), width = 0.2)
+#ggsave("BNTCORR_over_time.png", height = 7, width = 12)
+
+# bar graphs of visit number
+ggplot(bntcorr, aes(x = visit_number)) + geom_bar() + ggtitle("BNTCORR visits distribution") +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7)) + 
+  geom_text(stat='count', aes(label = ..count..), vjust = -0.2)
+#ggsave("BNTCORR_visits.png", height = 7, width = 12)
+
+
+### ANCORR
+ancorr <- lang_behav_measures %>% 
+  select(LONI_ID, diagnosis.f, visit_number, ANCORR) %>% 
+  filter(!is.na(ANCORR))
+
+
+# if we were to use visit numbers
+# calculate sum of DCORR score based on groups of diagnoses type and visit number
+ancorr <- ancorr %>% 
+  group_by(diagnosis.f, visit_number) %>% 
+  mutate(sum_ANCORR = sum(ANCORR, na.rm = TRUE)) %>% 
+  mutate(count_ANCORR = n()) %>% 
+  mutate(avg_ANCORR = sum_ANCORR/count_ANCORR, se_ANCORR = plotrix::std.error(ANCORR))
+
+ggplot(ancorr, aes(x = visit_number, y = avg_ANCORR, color = diagnosis.f)) + 
+  geom_line(size = 0.7) + ggtitle("Time series of ANCORR score") +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7)) + scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  geom_errorbar(aes(ymin = avg_ANCORR - se_ANCORR, ymax = avg_ANCORR+ se_ANCORR), width = 0.2)
+#ggsave("ANCORR_over_time.png", height = 7, width = 12)
+
+# bar graphs of visit number
+ggplot(ancorr, aes(x = visit_number)) + geom_bar() + ggtitle("ANCORR visits distribution") +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7)) + 
+  geom_text(stat='count', aes(label = ..count..), vjust = -0.2)
+#ggsave("ANCORR_visits.png", height = 7, width = 12)
+
+
+### PPTP_COR
+pptp <- lang_behav_measures %>% 
+  select(LONI_ID, diagnosis.f, visit_number, PPTP_COR) %>% 
+  filter(!is.na(PPTP_COR))
+
+
+# if we were to use visit numbers
+# calculate sum of DCORR score based on groups of diagnoses type and visit number
+pptp <- pptp %>% 
+  group_by(diagnosis.f, visit_number) %>% 
+  mutate(sum_PPTPCORR = sum(PPTP_COR, na.rm = TRUE)) %>% 
+  mutate(count_PPTPCORR = n()) %>% 
+  mutate(avg_PPTPCORR = sum_PPTPCORR/count_PPTPCORR, se_PPTPCORR = plotrix::std.error(PPTP_COR))
+
+ggplot(pptp, aes(x = visit_number, y = avg_PPTPCORR, color = diagnosis.f)) + 
+  geom_line(size = 0.7) + ggtitle("Time series of PPTP_COR score") +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7)) + scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  geom_errorbar(aes(ymin = avg_PPTPCORR - se_PPTPCORR, ymax = avg_PPTPCORR + se_PPTPCORR), width = 0.2)
+#ggsave("PPTP_COR_over_time.png", height = 7, width = 12)
+# to see why PPTP plots look weird
+weird <- pptp %>% 
+  filter(diagnosis.f == "CON" & visit_number == 4 |
+           diagnosis.f == "CON" & visit_number == 2 |
+           diagnosis.f == "CON" & visit_number == 3) 
+
+# bar graphs of visit number
+ggplot(pptp, aes(x = visit_number)) + geom_bar() + ggtitle("PPTP_COR visits distribution") +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7)) + 
+  geom_text(stat='count', aes(label = ..count..), vjust = -0.2)
+#ggsave("PPTP_COR_visits.png", height = 7, width = 12)
 
 ```
 
+
+
+
+
+
+
+
+```{r}
+
+temp1 <- lang_behav_measures %>% 
+  select(LONI_ID, diagnosis.f, visit_number, visits_time_diff, DCORR)
+tt <- temp1 %>% 
+  filter(diagnosis.f == "CON" & visit_number == 2) 
+
+tt %>% 
+  group_by()
+  summarize(sum(DCORR))
+#1891/126
+  
+  tt <- temp1 %>% 
+  filter(diagnosis.f == "CON" & visit_number == 4) %>% 
+  mutate(count = n())
+
+# con2, 126
+
+tt %>% 
+  summarize(n())
+
+
+
+
+# calculate sum of DCORR score based on groups of diagnoses type and time differences round
+temp2 <- temp1 %>% 
+  group_by(diagnosis.f, time_diff_round) %>% 
+  summarize(sum_DCORR = sum(DCORR, na.rm = TRUE)) %>% 
+  mutate(count = n())
+
+
+```
 
